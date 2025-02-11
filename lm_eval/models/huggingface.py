@@ -41,6 +41,30 @@ from lm_eval.models.utils import (
 
 eval_logger = utils.eval_logger
 
+def neftune_post_forward_hook(module, input, output):
+    """
+    Implements the NEFTune forward pass for the model using forward hooks. Note this works only for torch.nn.Embedding
+    layers. This method is slightly adapted from the original source code that can be found here:
+    https://github.com/neelsjain/NEFTune Simply add it to your model as follows:
+    ```python
+    model = ...
+    model.embed_tokens.neftune_noise_alpha = 0.1
+    model.embed_tokens.register_forward_hook(neftune_post_forward_hook)
+    ```
+    Args:
+        module (`torch.nn.Module`):
+            The embedding module where the hook is attached. Note that you need to set `module.neftune_noise_alpha` to
+            the desired noise alpha value.
+        input (`torch.Tensor`):
+            The input tensor to the model.
+        output (`torch.Tensor`):
+            The output tensor of the model (i.e. the embeddings).
+    """
+    dims = torch.tensor(output.size(1) * output.size(2))
+    mag_norm = module.neftune_noise_alpha / torch.sqrt(dims)
+    output = output + torch.zeros_like(output).uniform_(-mag_norm, mag_norm)
+    return output
+
 
 @register_model("hf-auto", "hf", "huggingface")
 class HFLM(TemplateLM):
@@ -670,6 +694,10 @@ class HFLM(TemplateLM):
                     )
 
             del _model_delta
+
+        embeddings = self._model.get_input_embeddings()
+        embeddings.neftune_noise_alpha = 10
+        embeddings.register_forward_hook(neftune_post_forward_hook)
 
         return None
 
